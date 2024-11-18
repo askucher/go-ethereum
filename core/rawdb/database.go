@@ -30,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb/leveldb"
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 	"github.com/ethereum/go-ethereum/ethdb/pebble"
+	"github.com/ethereum/go-ethereum/ethdb/remoteleveldb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/olekukonko/tablewriter"
 )
@@ -323,6 +324,17 @@ func NewLevelDBDatabase(file string, cache int, handles int, namespace string, r
 	return NewDatabase(db), nil
 }
 
+// NewLevelDBDatabase creates a persistent key-value database without a freezer
+// moving immutable chain segments into cold storage.
+func NewRemoteLevelDBDatabase(file string, cache int, handles int, namespace string, readonly bool) (ethdb.Database, error) {
+	db, err := remoteleveldb.New(file, cache, handles, namespace, readonly)
+	if err != nil {
+		return nil, err
+	}
+	log.Info("Using LevelDB as the backing database")
+	return NewDatabase(db), nil
+}
+
 // NewPebbleDBDatabase creates a persistent key-value database without a freezer
 // moving immutable chain segments into cold storage.
 func NewPebbleDBDatabase(file string, cache int, handles int, namespace string, readonly, ephemeral bool) (ethdb.Database, error) {
@@ -334,8 +346,9 @@ func NewPebbleDBDatabase(file string, cache int, handles int, namespace string, 
 }
 
 const (
-	dbPebble  = "pebble"
-	dbLeveldb = "leveldb"
+	dbPebble        = "pebble"
+	dbLeveldb       = "leveldb"
+	removedbLeveldb = "remoteleveldb"
 )
 
 // PreexistingDatabase checks the given data directory whether a database is already
@@ -377,7 +390,7 @@ type OpenOptions struct {
 //	db is existent     |  from db         |  specified type (if compatible)
 func openKeyValueDatabase(o OpenOptions) (ethdb.Database, error) {
 	// Reject any unsupported database type
-	if len(o.Type) != 0 && o.Type != dbLeveldb && o.Type != dbPebble {
+	if len(o.Type) != 0 && o.Type != dbLeveldb && o.Type != dbPebble && o.Type != removedbLeveldb {
 		return nil, fmt.Errorf("unknown db.engine %v", o.Type)
 	}
 	// Retrieve any pre-existing database's type and use that or the requested one
@@ -394,6 +407,12 @@ func openKeyValueDatabase(o OpenOptions) (ethdb.Database, error) {
 		log.Info("Using leveldb as the backing database")
 		return NewLevelDBDatabase(o.Directory, o.Cache, o.Handles, o.Namespace, o.ReadOnly)
 	}
+
+	if o.Type == removedbLeveldb || existingDb == removedbLeveldb {
+		log.Info("Using leveldb as the backing database")
+		return NewRemoteLevelDBDatabase(o.Directory, o.Cache, o.Handles, o.Namespace, o.ReadOnly)
+	}
+
 	// No pre-existing database, no user-requested one either. Default to Pebble.
 	log.Info("Defaulting to pebble as the backing database")
 	return NewPebbleDBDatabase(o.Directory, o.Cache, o.Handles, o.Namespace, o.ReadOnly, o.Ephemeral)
